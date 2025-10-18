@@ -22,13 +22,13 @@ const conversationHistory = new Map();
 async function sendWhatsAppMessage(to, body) {
   try {
     console.log("📱 Sending to:", to);
-    
+
     const message = await client.messages.create({
       from: twilioWhatsAppNumber,
       body: body,
       to: to, // Use directly - Twilio sends it in correct format
     });
-    
+
     console.log("✅ Message sent:", message.sid);
     return message;
   } catch (error) {
@@ -37,6 +37,7 @@ async function sendWhatsAppMessage(to, body) {
   }
 }
 
+// Webhook endpoint for incoming messages
 // Webhook endpoint for incoming messages
 router.post("/webhook", async (req, res) => {
   try {
@@ -64,17 +65,22 @@ router.post("/webhook", async (req, res) => {
     // Send message to your RAG chatbot
     let botReply;
     try {
+      // Validate CHATBOT_API_URL
+      if (!CHATBOT_API_URL || CHATBOT_API_URL === "undefined") {
+        throw new Error("CHATBOT_API_URL is not configured");
+      }
+
       // Build correct endpoint
-      const chatEndpoint = CHATBOT_API_URL.endsWith('/chat') 
-        ? CHATBOT_API_URL 
+      const chatEndpoint = CHATBOT_API_URL.endsWith("/chat")
+        ? CHATBOT_API_URL
         : `${CHATBOT_API_URL}/chat`;
-        
+
       console.log("🤖 Calling chatbot API:", chatEndpoint);
 
       const chatbotResponse = await axios.post(
         chatEndpoint,
         {
-          message: incomingMessage,
+          question: incomingMessage, // Changed from 'message' to 'question'
           conversationHistory: history,
         },
         {
@@ -91,17 +97,16 @@ router.post("/webhook", async (req, res) => {
         chatbotResponse.data.answer ||
         "I received your message!";
 
-      console.log("✅ Chatbot response received:", botReply.substring(0, 100));
+      console.log("✅ Chatbot response received");
     } catch (apiError) {
       console.error("❌ Chatbot API error:", apiError.message);
       if (apiError.response) {
-        console.error("API URL:", CHATBOT_API_URL);
         console.error("Status:", apiError.response.status);
         console.error("Data:", apiError.response.data);
       }
 
       botReply =
-        "Sorry, I'm having trouble processing your request right now. Please try again.";
+        "Sorry, I'm having trouble processing your request right now. Please try again later.";
     }
 
     // Update conversation history
@@ -123,9 +128,9 @@ router.post("/webhook", async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>");
   } catch (error) {
-    console.error("❌ Webhook error:", error);
+    console.error("❌ Webhook error:", error.message);
 
-    // Don't try to send error message - just log and return
+    // Always respond to Twilio to prevent retries
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>");
   }

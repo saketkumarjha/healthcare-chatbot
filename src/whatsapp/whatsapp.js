@@ -1,5 +1,5 @@
-import twilio from 'twilio';
-import axios from 'axios';
+import twilio from "twilio";
+import axios from "axios";
 
 // Twilio credentials from environment variables
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -9,7 +9,8 @@ const twilioWhatsAppNumber = process.env.TWILIO_WHATSAPP_NUMBER; // format: what
 const client = twilio(accountSid, authToken);
 
 // Your deployed chatbot API URL
-const CHATBOT_API_URL = process.env.CHATBOT_API_URL || 'https://your-vercel-app.vercel.app/api';
+const CHATBOT_API_URL =
+  process.env.CHATBOT_API_URL || "https://your-vercel-app.vercel.app/api";
 
 // Store conversation history (use Redis/DB in production)
 const conversationHistory = new Map();
@@ -17,17 +18,29 @@ const conversationHistory = new Map();
 /**
  * Send a WhatsApp message
  */
-export async function sendWhatsAppMessage(to, body) {
+// Helper function to send WhatsApp message
+async function sendWhatsAppMessage(to, body) {
   try {
+    // Clean up the phone number - remove spaces and ensure proper format
+    let cleanTo = to.replace(/\s+/g, ""); // Remove all spaces
+
+    // If it's missing the +, add it
+    if (cleanTo.startsWith("whatsapp:") && !cleanTo.startsWith("whatsapp:+")) {
+      cleanTo = cleanTo.replace("whatsapp:", "whatsapp:+");
+    }
+
+    console.log("📱 Sending to (cleaned):", cleanTo);
+
     const message = await client.messages.create({
       from: twilioWhatsAppNumber,
       body: body,
-      to: to // format: whatsapp:+919263698519
+      to: cleanTo,
     });
-    console.log('Message sent:', message.sid);
+
+    console.log("✅ Message sent:", message.sid);
     return message;
   } catch (error) {
-    console.error('Error sending WhatsApp message:', error);
+    console.error("❌ Error sending message:", error.message);
     throw error;
   }
 }
@@ -41,12 +54,12 @@ export async function sendTemplateMessage(to, contentSid, variables) {
       from: twilioWhatsAppNumber,
       contentSid: contentSid, // e.g., 'HXb5b62575e6e4ff6129ad7c8efe1f983e'
       contentVariables: JSON.stringify(variables), // e.g., {"1":"12/1","2":"3pm"}
-      to: to
+      to: to,
     });
-    console.log('Template message sent:', message.sid);
+    console.log("Template message sent:", message.sid);
     return message;
   } catch (error) {
-    console.error('Error sending template message:', error);
+    console.error("Error sending template message:", error);
     throw error;
   }
 }
@@ -58,9 +71,11 @@ export async function handleIncomingMessage(req, res) {
   try {
     const incomingMessage = req.body.Body;
     const senderNumber = req.body.From; // format: whatsapp:+919263698519
-    const senderName = req.body.ProfileName || 'User';
+    const senderName = req.body.ProfileName || "User";
 
-    console.log(`📱 Message from ${senderName} (${senderNumber}): ${incomingMessage}`);
+    console.log(
+      `📱 Message from ${senderName} (${senderNumber}): ${incomingMessage}`
+    );
 
     // Get or initialize conversation history
     if (!conversationHistory.has(senderNumber)) {
@@ -69,22 +84,27 @@ export async function handleIncomingMessage(req, res) {
     const history = conversationHistory.get(senderNumber);
 
     // Send message to your RAG chatbot
-    const chatbotResponse = await axios.post(`${CHATBOT_API_URL}/chat`, {
-      message: incomingMessage,
-      conversationHistory: history
-    }, {
-      timeout: 25000 // 25 second timeout
-    });
+    const chatbotResponse = await axios.post(
+      `${CHATBOT_API_URL}/chat`,
+      {
+        question: incomingMessage, // CHANGED: from 'message' to 'question'
+        conversationHistory: history,
+      },
+      {
+        timeout: 25000, // 25 second timeout
+      }
+    );
 
-    const botReply = chatbotResponse.data.response || 
-                     chatbotResponse.data.message || 
-                     chatbotResponse.data.answer ||
-                     'I received your message but couldn\'t generate a response.';
+    const botReply =
+      chatbotResponse.data.response ||
+      chatbotResponse.data.answer || // Check 'answer' before 'message'
+      chatbotResponse.data.message ||
+      "I received your message but couldn't generate a response.";
 
     // Update conversation history
     history.push(
-      { role: 'user', content: incomingMessage },
-      { role: 'assistant', content: botReply }
+      { role: "user", content: incomingMessage },
+      { role: "assistant", content: botReply }
     );
 
     // Keep only last 20 messages
@@ -96,27 +116,25 @@ export async function handleIncomingMessage(req, res) {
     await sendWhatsAppMessage(senderNumber, botReply);
 
     // Respond to Twilio with empty TwiML
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end('<Response></Response>');
-
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    res.end("<Response></Response>");
   } catch (error) {
-    console.error('❌ WhatsApp webhook error:', error.message);
-    
+    console.error("❌ WhatsApp webhook error:", error.message);
+
     // Send error message to user
     try {
       await sendWhatsAppMessage(
         req.body.From,
-        'Sorry, I encountered an error processing your message. Please try again in a moment.'
+        "Sorry, I encountered an error processing your message. Please try again in a moment."
       );
     } catch (sendError) {
-      console.error('Failed to send error message:', sendError);
+      console.error("Failed to send error message:", sendError);
     }
 
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end('<Response></Response>');
+    res.writeHead(200, { "Content-Type": "text/xml" });
+    res.end("<Response></Response>");
   }
 }
-
 /**
  * Test sending a message
  */
@@ -124,8 +142,8 @@ export async function testMessage(to) {
   try {
     const message = await client.messages.create({
       from: twilioWhatsAppNumber,
-      body: '🤖 Hello! Your RAG Chatbot is now connected to WhatsApp. Send me a message to get started!',
-      to: to
+      body: "🤖 Hello! Your RAG Chatbot is now connected to WhatsApp. Send me a message to get started!",
+      to: to,
     });
     return { success: true, sid: message.sid };
   } catch (error) {
@@ -137,7 +155,9 @@ export async function testMessage(to) {
  * Clear conversation history for a user
  */
 export function clearHistory(phoneNumber) {
-  const key = phoneNumber.startsWith('whatsapp:') ? phoneNumber : `whatsapp:${phoneNumber}`;
+  const key = phoneNumber.startsWith("whatsapp:")
+    ? phoneNumber
+    : `whatsapp:${phoneNumber}`;
   conversationHistory.delete(key);
-  return { success: true, message: 'History cleared' };
+  return { success: true, message: "History cleared" };
 }
