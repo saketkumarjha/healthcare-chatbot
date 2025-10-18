@@ -21,15 +21,18 @@ const conversationHistory = new Map();
 // Helper function to send WhatsApp message
 async function sendWhatsAppMessage(to, body) {
   try {
+    console.log("📱 Sending to:", to);
+    
     const message = await client.messages.create({
       from: twilioWhatsAppNumber,
       body: body,
-      to: to,
+      to: to, // Use directly - Twilio sends it in correct format
     });
+    
     console.log("✅ Message sent:", message.sid);
     return message;
   } catch (error) {
-    console.error("❌ Error sending message:", error);
+    console.error("❌ Error sending message:", error.message);
     throw error;
   }
 }
@@ -38,83 +41,7 @@ async function sendWhatsAppMessage(to, body) {
 router.post("/webhook", async (req, res) => {
   try {
     const incomingMessage = req.body.Body;
-    const senderNumber = req.body.From;
-    const senderName = req.body.ProfileName || "User";
-
-    console.log(
-      `📱 Message from ${senderName} (${senderNumber}): ${incomingMessage}`
-    );
-
-    // Get or initialize conversation history
-    if (!conversationHistory.has(senderNumber)) {
-      conversationHistory.set(senderNumber, []);
-    }
-    const history = conversationHistory.get(senderNumber);
-
-    // Send message to your RAG chatbot
-    let botReply;
-    try {
-      const chatbotResponse = await axios.post(
-        `${CHATBOT_API_URL}/chat`,
-        {
-          message: incomingMessage,
-          conversationHistory: history,
-        },
-        {
-          timeout: 25000,
-        }
-      );
-
-      botReply =
-        chatbotResponse.data.response ||
-        chatbotResponse.data.message ||
-        chatbotResponse.data.answer ||
-        "I received your message!";
-    } catch (apiError) {
-      console.error("Chatbot API error:", apiError.message);
-      botReply =
-        "Sorry, I'm having trouble processing your request right now. Please try again.";
-    }
-
-    // Update conversation history
-    history.push(
-      { role: "user", content: incomingMessage },
-      { role: "assistant", content: botReply }
-    );
-
-    // Keep only last 20 messages
-    if (history.length > 20) {
-      history.splice(0, history.length - 20);
-    }
-
-    // Send response back to WhatsApp
-    await sendWhatsAppMessage(senderNumber, botReply);
-
-    // Respond to Twilio
-    res.writeHead(200, { "Content-Type": "text/xml" });
-    res.end("<Response></Response>");
-  } catch (error) {
-    console.error("❌ Webhook error:", error);
-
-    try {
-      await sendWhatsAppMessage(
-        req.body.From,
-        "Sorry, something went wrong. Please try again."
-      );
-    } catch (sendError) {
-      console.error("Failed to send error message:", sendError);
-    }
-
-    res.writeHead(200, { "Content-Type": "text/xml" });
-    res.end("<Response></Response>");
-  }
-});
-
-// Health check
-router.post("/webhook", async (req, res) => {
-  try {
-    const incomingMessage = req.body.Body;
-    const senderNumber = req.body.From; // Already in format: whatsapp:+919263698519
+    const senderNumber = req.body.From; // Format: whatsapp:+919263698519
     const senderName = req.body.ProfileName || "User";
 
     console.log(
@@ -137,10 +64,15 @@ router.post("/webhook", async (req, res) => {
     // Send message to your RAG chatbot
     let botReply;
     try {
-      console.log("🤖 Calling chatbot API:", CHATBOT_API_URL);
+      // Build correct endpoint
+      const chatEndpoint = CHATBOT_API_URL.endsWith('/chat') 
+        ? CHATBOT_API_URL 
+        : `${CHATBOT_API_URL}/chat`;
+        
+      console.log("🤖 Calling chatbot API:", chatEndpoint);
 
       const chatbotResponse = await axios.post(
-        `${CHATBOT_API_URL}`,
+        chatEndpoint,
         {
           message: incomingMessage,
           conversationHistory: history,
@@ -162,9 +94,11 @@ router.post("/webhook", async (req, res) => {
       console.log("✅ Chatbot response received:", botReply.substring(0, 100));
     } catch (apiError) {
       console.error("❌ Chatbot API error:", apiError.message);
-      console.error("API URL:", CHATBOT_API_URL);
-      console.error("Status:", apiError.response?.status);
-      console.error("Data:", apiError.response?.data);
+      if (apiError.response) {
+        console.error("API URL:", CHATBOT_API_URL);
+        console.error("Status:", apiError.response.status);
+        console.error("Data:", apiError.response.data);
+      }
 
       botReply =
         "Sorry, I'm having trouble processing your request right now. Please try again.";
@@ -181,7 +115,7 @@ router.post("/webhook", async (req, res) => {
       history.splice(0, history.length - 20);
     }
 
-    // Send response back to WhatsApp (number is already in correct format)
+    // Send response back to WhatsApp
     console.log("📤 Sending reply to:", senderNumber);
     await sendWhatsAppMessage(senderNumber, botReply);
 
@@ -191,87 +125,23 @@ router.post("/webhook", async (req, res) => {
   } catch (error) {
     console.error("❌ Webhook error:", error);
 
-    try {
-      const senderNumber = req.body.From;
-      if (senderNumber && senderNumber.startsWith("whatsapp:")) {
-        await sendWhatsAppMessage(
-          senderNumber,
-          "Sorry, something went wrong. Please try again."
-        );
-      }
-    } catch (sendError) {
-      console.error("Failed to send error message:", sendError.message);
-    }
-
+    // Don't try to send error message - just log and return
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>");
   }
 });
 
-// Test endpoint - send a message
-router.post("/send", async (req, res) => {
-  try {
-    const { to, message } = req.body;
-
-    // Debug: Log what we're receiving
-    console.log("📨 Send request received:");
-    console.log("  To:", to);
-    console.log("  Message:", message);
-
-    if (!to || !message) {
-      return res.status(400).json({
-        error: "Missing required fields: to, message",
-      });
-    }
-
-    // Debug: Log credentials being used
-    console.log("🔑 Using credentials:");
-    console.log(
-      "  Account SID:",
-      accountSid ? `${accountSid.substring(0, 10)}...` : "NOT SET"
-    );
-    console.log(
-      "  Auth Token:",
-      authToken ? `${authToken.substring(0, 10)}...` : "NOT SET"
-    );
-    console.log("  WhatsApp Number:", twilioWhatsAppNumber);
-
-    // Better phone number formatting
-    let formattedTo = to;
-    if (!formattedTo.startsWith("whatsapp:")) {
-      // Remove any spaces and ensure + is included
-      const cleanNumber = to.replace(/\s+/g, "");
-      formattedTo = cleanNumber.startsWith("+")
-        ? `whatsapp:${cleanNumber}`
-        : `whatsapp:+${cleanNumber}`;
-    }
-
-    console.log("📤 Attempting to send message via Twilio...");
-    const result = await sendWhatsAppMessage(formattedTo, message);
-
-    console.log("✅ Message sent successfully:", result.sid);
-
-    res.json({
-      success: true,
-      messageSid: result.sid,
-      to: formattedTo,
-    });
-  } catch (error) {
-    console.error("❌ Error sending message:", error);
-    console.error("Error details:", {
-      message: error.message,
-      code: error.code,
-      moreInfo: error.moreInfo,
-    });
-
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      code: error.code,
-    });
-  }
+// Health check
+router.get("/webhook", (req, res) => {
+  res.json({
+    status: "active",
+    message: "WhatsApp webhook is running",
+    timestamp: new Date().toISOString(),
+    chatbotAPI: CHATBOT_API_URL,
+  });
 });
 
+// Debug credentials endpoint
 router.get("/debug/credentials", (req, res) => {
   res.json({
     accountSid: {
@@ -296,14 +166,62 @@ router.get("/debug/credentials", (req, res) => {
         ? twilioWhatsAppNumber.startsWith("whatsapp:")
         : false,
     },
+    chatbotAPI: CHATBOT_API_URL,
     rawEnvVars: {
       TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID ? "SET" : "NOT SET",
       TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN ? "SET" : "NOT SET",
       TWILIO_WHATSAPP_NUMBER: process.env.TWILIO_WHATSAPP_NUMBER || "NOT SET",
+      CHATBOT_API_URL: process.env.CHATBOT_API_URL || "NOT SET",
     },
   });
 });
-// Send template message (like your Twilio example)
+
+// Test endpoint - send a message
+router.post("/send", async (req, res) => {
+  try {
+    const { to, message } = req.body;
+
+    console.log("📨 Send request received:");
+    console.log("  To:", to);
+    console.log("  Message:", message);
+
+    if (!to || !message) {
+      return res.status(400).json({
+        error: "Missing required fields: to, message",
+      });
+    }
+
+    // Better phone number formatting
+    let formattedTo = to;
+    if (!formattedTo.startsWith("whatsapp:")) {
+      const cleanNumber = to.replace(/\s+/g, "");
+      formattedTo = cleanNumber.startsWith("+")
+        ? `whatsapp:${cleanNumber}`
+        : `whatsapp:+${cleanNumber}`;
+    }
+
+    console.log("📤 Attempting to send message via Twilio...");
+    const result = await sendWhatsAppMessage(formattedTo, message);
+
+    console.log("✅ Message sent successfully:", result.sid);
+
+    res.json({
+      success: true,
+      messageSid: result.sid,
+      to: formattedTo,
+    });
+  } catch (error) {
+    console.error("❌ Error sending message:", error);
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+    });
+  }
+});
+
+// Send template message
 router.post("/send-template", async (req, res) => {
   try {
     const { to, contentSid, variables } = req.body;
@@ -335,7 +253,7 @@ router.post("/send-template", async (req, res) => {
   }
 });
 
-// Test connection - send a test message
+// Test connection
 router.post("/test", async (req, res) => {
   try {
     const { to } = req.body;
@@ -367,7 +285,7 @@ router.post("/test", async (req, res) => {
   }
 });
 
-// Clear conversation history for a user
+// Clear conversation history
 router.delete("/history/:phoneNumber", (req, res) => {
   try {
     const phoneNumber = req.params.phoneNumber;
