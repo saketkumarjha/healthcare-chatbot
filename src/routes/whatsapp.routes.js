@@ -42,19 +42,12 @@ async function sendWhatsAppMessage(to, body) {
 router.post("/webhook", async (req, res) => {
   try {
     const incomingMessage = req.body.Body;
-    const senderNumber = req.body.From; // Format: whatsapp:+919263698519
+    const senderNumber = req.body.From;
     const senderName = req.body.ProfileName || "User";
 
     console.log(
       `📱 Message from ${senderName} (${senderNumber}): ${incomingMessage}`
     );
-
-    // Validate sender number format
-    if (!senderNumber || !senderNumber.startsWith("whatsapp:")) {
-      console.error("❌ Invalid sender number format:", senderNumber);
-      res.writeHead(200, { "Content-Type": "text/xml" });
-      return res.end("<Response></Response>");
-    }
 
     // Get or initialize conversation history
     if (!conversationHistory.has(senderNumber)) {
@@ -65,12 +58,6 @@ router.post("/webhook", async (req, res) => {
     // Send message to your RAG chatbot
     let botReply;
     try {
-      // Validate CHATBOT_API_URL
-      if (!CHATBOT_API_URL || CHATBOT_API_URL === "undefined") {
-        throw new Error("CHATBOT_API_URL is not configured");
-      }
-
-      // Build correct endpoint
       const chatEndpoint = CHATBOT_API_URL.endsWith("/chat")
         ? CHATBOT_API_URL
         : `${CHATBOT_API_URL}/chat`;
@@ -80,7 +67,7 @@ router.post("/webhook", async (req, res) => {
       const chatbotResponse = await axios.post(
         chatEndpoint,
         {
-          question: incomingMessage, // Changed from 'message' to 'question'
+          question: incomingMessage,
           conversationHistory: history,
         },
         {
@@ -91,13 +78,25 @@ router.post("/webhook", async (req, res) => {
         }
       );
 
+      // LOG THE ENTIRE RESPONSE TO SEE STRUCTURE
+      console.log(
+        "📦 Full API Response:",
+        JSON.stringify(chatbotResponse.data, null, 2)
+      );
+      console.log("📦 Response keys:", Object.keys(chatbotResponse.data));
+
+      // Try different possible response fields
       botReply =
         chatbotResponse.data.response ||
-        chatbotResponse.data.message ||
         chatbotResponse.data.answer ||
+        chatbotResponse.data.message ||
+        chatbotResponse.data.reply ||
+        chatbotResponse.data.text ||
+        chatbotResponse.data.data?.response ||
+        chatbotResponse.data.data?.answer ||
         "I received your message!";
 
-      console.log("✅ Chatbot response received");
+      console.log("✅ Bot reply extracted:", botReply.substring(0, 100));
     } catch (apiError) {
       console.error("❌ Chatbot API error:", apiError.message);
       if (apiError.response) {
@@ -106,7 +105,7 @@ router.post("/webhook", async (req, res) => {
       }
 
       botReply =
-        "Sorry, I'm having trouble processing your request right now. Please try again later.";
+        "Sorry, I'm having trouble processing your request right now. Please try again.";
     }
 
     // Update conversation history
@@ -115,22 +114,18 @@ router.post("/webhook", async (req, res) => {
       { role: "assistant", content: botReply }
     );
 
-    // Keep only last 20 messages
     if (history.length > 20) {
       history.splice(0, history.length - 20);
     }
 
     // Send response back to WhatsApp
-    console.log("📤 Sending reply to:", senderNumber);
+    console.log("📤 Sending reply:", botReply.substring(0, 50));
     await sendWhatsAppMessage(senderNumber, botReply);
 
-    // Respond to Twilio
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>");
   } catch (error) {
     console.error("❌ Webhook error:", error.message);
-
-    // Always respond to Twilio to prevent retries
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>");
   }
