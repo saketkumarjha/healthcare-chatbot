@@ -99,12 +99,12 @@ app.use('*', (req, res) => {
 app.use(errorHandler);
 
 
-app.listen(config.port, () => {
-  logger.info(`Server is running on port ${config.port}`);
-  logger.info(`Node environment: ${config.nodeEnv}`);
-  logger.info(`Database environment: ${config.dbEnv}`);
-  logger.info(`Database URL: ${config.dbUrl}`);
+// app.listen(config.port, () => {
+//   logger.info(`Server is running on port ${config.port}`);
+//   logger.info(`Node environment: ${config.nodeEnv}`);
+//   logger.info(`Database environment: ${config.dbEnv}`);
+//   logger.info(`Database URL: ${config.dbUrl}`);
   
-})
+// })
 // Export the app for Vercel
 export default app;
